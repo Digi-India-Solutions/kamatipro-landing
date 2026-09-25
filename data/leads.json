@@ -1,0 +1,80 @@
+[
+  {
+    "name": "aasib khan",
+    "mobile": "9131734930",
+    "email": "aasibkhan155472@gmail.com",
+    "message": "Mujhe KametiPro software ka live demo chahiye.",
+    "groups": "",
+    "source": "Demo Form Modal (Free Demo Book Karein)",
+    "emailSent": true,
+    "id": "lead_1790317201247_ejzvy",
+    "createdAt": "25/9/2026, 11:50:01 am"
+  },
+  {
+    "name": "akash singh",
+    "mobile": "9131734930",
+    "email": "aasibkhan155471@gmail.com",
+    "message": "Mujhe KametiPro software ka live demo chahiye.",
+    "groups": "",
+    "source": "Demo Form Modal (Free Demo Book Karein)",
+    "emailSent": true,
+    "id": "lead_1790317088773_sfd6k",
+    "createdAt": "25/9/2026, 11:48:08 am"
+  },
+  {
+    "name": "Akash Singh",
+    "mobile": "9131734930",
+    "email": "aasibkhan155471@gmail.com",
+    "message": "Mujhe KametiPro demo software ke baare mein poochna hai.",
+    "groups": "",
+    "source": "Hostinger SMTP Pipeline Test",
+    "emailSent": true,
+    "id": "lead_1790316752758_klbx0",
+    "createdAt": "25/9/2026, 11:42:32 am"
+  },
+  {
+    "name": "Akash Singh",
+    "mobile": "9131734930",
+    "email": "aasibkhan155471@gmail.com",
+    "message": "Mujhe KametiPro demo software ke baare mein poochna hai.",
+    "groups": "",
+    "source": "Hostinger SMTP Pipeline Test",
+    "emailSent": true,
+    "id": "lead_1790316750124_rq6hd",
+    "createdAt": "25/9/2026, 11:42:30 am"
+  },
+  {
+    "name": "akash singh",
+    "mobile": "9131734930",
+    "email": "aasibkhan155471@gmail.com",
+    "message": "kese ho muje bhi add karo pleas",
+    "groups": "",
+    "source": "Floating Chat Form",
+    "emailSent": false,
+    "emailError": "SMTP Error (535): 5.7.8  https://support.google.com/mail/?p=BadCredentials a92af1059eb24-145ad8e43d2sm3527613c88.12 - gsmtp",
+    "id": "lead_1790314311302_zbq80",
+    "createdAt": "25/9/2026, 11:01:51 am"
+  },
+  {
+    "name": "Akash Singh",
+    "mobile": "9131734930",
+    "email": "aasibkhan155471@gmail.com",
+    "message": "kese ho muje bhi add karo pleas",
+    "source": "Floating Chat Form",
+    "emailSent": false,
+    "emailError": "Google SMTP 535 BadCredentials (pending fresh app password)",
+    "id": "lead_1790314232118_dsdy1",
+    "createdAt": "25/9/2026, 11:00:32 am"
+  },
+  {
+    "name": "Akash Singh",
+    "mobile": "9131734930",
+    "email": "aasibkhan155471@gmail.com",
+    "message": "kese ho muje bhi add karo pleas",
+    "source": "Floating Chat Form",
+    "emailSent": false,
+    "emailError": "Google SMTP 535 BadCredentials (pending fresh app password)",
+    "id": "lead_1790314231969_yj6a2",
+    "createdAt": "25/9/2026, 11:00:31 am"
+  }
+]

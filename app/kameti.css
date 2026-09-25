@@ -1,0 +1,240 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@600;700&family=Inter:wght@400;500;600&display=swap');
+
+/* Honeypot field hidden from humans but visible to bots */
+.hp-field {
+  position: absolute;
+  left: -9999px;
+  top: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Amber focus outline for accessibility */
+:focus-visible {
+  outline: 2px solid #F5A524;
+  outline-offset: 2px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* One shared section container: 1200px max, centered, 16px side pad on mobile, 24px from 640px up */
+.km-container {
+  width: 100%;
+  max-width: 1200px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+@media (min-width: 640px) {
+  .km-container {
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* Scrollable areas without a visible scrollbar */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Thin custom scrollbar for the product mock content area */
+.thin-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #C3CBF5 transparent;
+}
+.thin-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.thin-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  background: #C3CBF5;
+  border-radius: 999px;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #A9B4EE;
+}
+
+/* 200ms cross-fade between product-preview panels */
+.tab-fade {
+  animation: tabFade 200ms ease;
+}
+@keyframes tabFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 180ms cross-fade when the mock's sidebar switches screens */
+.screen-fade {
+  animation: screenFade 180ms ease;
+}
+@keyframes screenFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Pulsing amber hint dot that points at the sidebar */
+.km-hint-dot {
+  animation: kmPulse 1.4s ease-in-out infinite;
+}
+@keyframes kmPulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.75);
+  }
+}
+
+/* Mock data tables: no wrapping, sticky header, compact rows */
+.km-table {
+  width: 100%;
+  min-width: 900px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+}
+.km-table th,
+.km-table td {
+  white-space: nowrap;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+.km-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  height: 40px;
+  background: #ffffff;
+  border-bottom: 1px solid #EDF1F7;
+  font-weight: 500;
+  color: #5B6B8C;
+  text-align: left;
+}
+.km-table tbody td {
+  height: 44px;
+  border-bottom: 1px solid #EDF1F7;
+  color: #0F1B2D;
+}
+.km-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Lead-capture popup entrance */
+.kp-popup-backdrop {
+  animation: kpFade 200ms ease;
+}
+.kp-popup-card {
+  animation: kpCardIn 200ms ease;
+}
+@keyframes kpFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes kpCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 767px) {
+  .kp-popup-card {
+    animation: kpSheetIn 200ms ease;
+  }
+  @keyframes kpSheetIn {
+    from {
+      opacity: 0;
+      transform: translateY(100%);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+/* Mobile app showcase: coverflow stage */
+.as-stage {
+  position: relative;
+  height: 700px;
+  max-width: 820px;
+  margin-left: auto;
+  margin-right: auto;
+  overflow: hidden;
+}
+.as-slide {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  margin-left: -170px;
+  transition: transform 350ms ease, opacity 350ms ease;
+  will-change: transform, opacity;
+}
+.as-phone {
+  width: 340px;
+  height: 640px;
+}
+.as-track {
+  transition: transform 350ms ease;
+}
+@media (max-width: 899px) {
+  .as-phone {
+    width: 300px;
+    height: 566px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .as-slide {
+    transition: opacity 150ms ease;
+  }
+  .as-track {
+    transition: none;
+  }
+}
