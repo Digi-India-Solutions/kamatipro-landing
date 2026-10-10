@@ -348,7 +348,6 @@ export default function DesktopWhatsApp() {
                   tabIndex={-1}
                   autoComplete="off"
                   aria-hidden="true"
-                  readOnly
                   className="hp-field"
                 />
 

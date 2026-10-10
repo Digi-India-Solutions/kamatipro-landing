@@ -1,64 +1,178 @@
-import { NextResponse } from "next/server";
-import { sendSmtpMail } from "../../../lib/smtp";
-import { saveLead, getLeads } from "../../../lib/leadStorage";
-
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+import { NextResponse } from "next/server";
+import { sendSmtpMail } from "../../../lib/smtp";
+import { saveLead } from "../../../lib/leadStorage";
+
+interface RateLimitEntry {
+  count: number;
+  resetAt: number;
+}
+
+const rateLimitMap = new Map<string, RateLimitEntry>();
+const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+const MAX_REQUESTS_PER_WINDOW = 5;
+
+/**
+ * In-memory rate limiter per IP address using x-real-ip header (fallback 'unknown').
+ * Allows at most 5 submissions per 10-minute window.
+ */
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+
+  // Prune expired entries to maintain bounded memory
+  if (rateLimitMap.size > 500) {
+    for (const [key, entry] of rateLimitMap.entries()) {
+      if (entry.resetAt <= now) {
+        rateLimitMap.delete(key);
+      }
+    }
+  }
+
+  const record = rateLimitMap.get(ip);
+  if (!record || record.resetAt <= now) {
+    rateLimitMap.set(ip, {
+      count: 1,
+      resetAt: now + RATE_LIMIT_WINDOW_MS,
+    });
+    return true;
+  }
+
+  if (record.count >= MAX_REQUESTS_PER_WINDOW) {
+    return false;
+  }
+
+  record.count += 1;
+  return true;
+}
+
+/**
+ * Escapes characters to prevent HTML injection in email templates.
+ */
+function escapeHtml(str: string): string {
+  return (str || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 export async function GET() {
-  const leads = getLeads();
-  return NextResponse.json({
-    status: "ok",
-    service: "KametiPro SMTP Email Service",
-    provider: "smtp.gmail.com",
-    port: 465,
-    totalLeadsSaved: leads.length,
-    recentLeads: leads.slice(0, 10),
-  });
+  return NextResponse.json(
+    { success: false, message: "Method Not Allowed" },
+    { status: 405 }
+  );
 }
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json().catch(() => null);
-
-    if (!body) {
+    // 1. Rate limiting by IP (x-real-ip header with fallback 'unknown')
+    const clientIp = (req.headers.get("x-real-ip") || "unknown").trim();
+    if (!checkRateLimit(clientIp)) {
       return NextResponse.json(
-        { success: false, error: "Invalid JSON payload" },
+        {
+          success: false,
+          message: "Too many requests. Please try again later.",
+        },
+        { status: 429 }
+      );
+    }
+
+    // 2. Validate JSON payload
+    const body = await req.json().catch(() => null);
+    if (!body || typeof body !== "object") {
+      return NextResponse.json(
+        { success: false, message: "Invalid JSON payload" },
         { status: 400 }
       );
     }
 
-    const { name, mobile, email, message, groups, source, website_alt } = body;
+    const {
+      name,
+      mobile,
+      phone,
+      email,
+      message,
+      groups,
+      source,
+      website_alt,
+      company_alt,
+      phone_alt,
+    } = body;
 
-    // Honeypot check for spam bots
-    if (website_alt && String(website_alt).trim() !== "") {
-      return NextResponse.json({ success: true, message: "OK" });
+    // 3. Honeypot check for automated bots
+    const honeypot = website_alt || company_alt || phone_alt;
+    if (honeypot && String(honeypot).trim() !== "") {
+      return NextResponse.json({
+        success: true,
+        message: "Message processed successfully",
+      });
     }
 
-    // Validation
-    const cleanName = typeof name === "string" ? name.trim() : "";
-    const cleanMobile = typeof mobile === "string" ? mobile.trim().replace(/\D/g, "") : "";
+    // 4. Validate and trim inputs
+    const rawName = typeof name === "string" ? name.trim() : "";
+    const rawMobile = typeof (mobile || phone) === "string" ? String(mobile || phone).trim() : "";
+    const cleanMobileDigits = rawMobile.replace(/\D/g, "");
     const cleanEmail = typeof email === "string" ? email.trim() : "";
     const cleanMessage = typeof message === "string" ? message.trim() : "";
     const cleanGroups = typeof groups === "string" ? groups.trim() : "";
-    const leadSource = typeof source === "string" ? source : "Website Contact Form";
+    const leadSource = typeof source === "string" ? source.trim() : "Website Contact Form";
 
-    if (cleanName.length < 2) {
+    // Length and format validation
+    if (rawName.length < 2 || rawName.length > 100) {
       return NextResponse.json(
-        { success: false, error: "Apna sahi naam likhiye." },
+        { success: false, message: "Please provide a valid name (2-100 characters)." },
         { status: 400 }
       );
+    }
+
+    // Accept 10 digits or 12 digits starting with country code 91
+    let cleanMobile = cleanMobileDigits;
+    if (cleanMobile.length === 12 && cleanMobile.startsWith("91")) {
+      cleanMobile = cleanMobile.slice(2);
     }
 
     if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
       return NextResponse.json(
-        { success: false, error: "10 digit ka sahi mobile number daaliye." },
+        { success: false, message: "Please provide a valid 10-digit mobile number." },
         { status: 400 }
       );
     }
 
-    // IST Formatted Timestamp
+    if (cleanEmail) {
+      if (cleanEmail.length > 150 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        return NextResponse.json(
+          { success: false, message: "Please provide a valid email address." },
+          { status: 400 }
+        );
+      }
+    }
+
+    if (cleanMessage.length > 2000) {
+      return NextResponse.json(
+        { success: false, message: "Message cannot exceed 2000 characters." },
+        { status: 400 }
+      );
+    }
+
+    if (cleanGroups.length > 100) {
+      return NextResponse.json(
+        { success: false, message: "Groups input exceeds allowed length." },
+        { status: 400 }
+      );
+    }
+
+    if (leadSource.length > 150) {
+      return NextResponse.json(
+        { success: false, message: "Source input exceeds allowed length." },
+        { status: 400 }
+      );
+    }
+
+    // 5. IST Formatted Timestamp
     const now = new Date();
     const istTime = now.toLocaleString("en-IN", {
       timeZone: "Asia/Kolkata",
@@ -67,15 +181,26 @@ export async function POST(req: Request) {
     });
 
     const isMessageForm = Boolean(cleanMessage || cleanEmail);
-    const waLink = `https://wa.me/91${cleanMobile}?text=${encodeURIComponent(
-      `Namaste ${cleanName} ji, Digi India Solutions (KametiPro) se sampark karne ke liye dhanyawad.`
-    )}`;
+    const safeHeaderName = rawName.replace(/[\r\n]+/g, " ");
+    const safeHeaderMobile = cleanMobile.replace(/[\r\n]+/g, " ");
 
     const subject = isMessageForm
-      ? `💬 Naya Sandesh: ${cleanName} (${cleanMobile}) - KametiPro`
-      : `🔥 Nayi Demo Enquiry: ${cleanName} (${cleanMobile}) - KametiPro`;
+      ? `💬 Naya Sandesh: ${safeHeaderName} (${safeHeaderMobile}) - KametiPro`
+      : `🔥 Nayi Demo Enquiry: ${safeHeaderName} (${safeHeaderMobile}) - KametiPro`;
 
-    // Professional HTML Email Template
+    const waLink = `https://wa.me/91${cleanMobile}?text=${encodeURIComponent(
+      `Namaste ${rawName} ji, Digi India Solutions (KametiPro) se sampark karne ke liye dhanyawad.`
+    )}`;
+
+    // 6. Escape all dynamic variables to prevent HTML injection in email
+    const safeNameHtml = escapeHtml(rawName);
+    const safeMobileHtml = escapeHtml(cleanMobile);
+    const safeEmailHtml = escapeHtml(cleanEmail);
+    const safeMessageHtml = escapeHtml(cleanMessage);
+    const safeGroupsHtml = escapeHtml(cleanGroups);
+    const safeSourceHtml = escapeHtml(leadSource);
+    const safeTimeHtml = escapeHtml(istTime);
+
     const html = `
 <!DOCTYPE html>
 <html>
@@ -103,7 +228,7 @@ export async function POST(req: Request) {
                       ${isMessageForm ? "💬 Naya Message Prapt Hua Hai!" : "🎉 Nayi Demo Enquiry Prapt Hui!"}
                     </h1>
                     <p style="margin:6px 0 0 0;font-size:13px;color:#C9D4F5;">
-                      Source: <strong>${leadSource}</strong>
+                      Source: <strong>${safeSourceHtml}</strong>
                     </p>
                   </td>
                 </tr>
@@ -125,7 +250,7 @@ export async function POST(req: Request) {
                     👤 Grahak Ka Naam:
                   </td>
                   <td style="padding:14px 18px;border-bottom:1px solid #E2E8F0;font-size:16px;color:#0F1B2D;font-weight:700;">
-                    ${cleanName}
+                    ${safeNameHtml}
                   </td>
                 </tr>
                 <tr>
@@ -133,31 +258,31 @@ export async function POST(req: Request) {
                     📞 Mobile Number:
                   </td>
                   <td style="padding:14px 18px;border-bottom:1px solid #E2E8F0;font-size:16px;color:#0F1B2D;font-weight:700;">
-                    <a href="tel:+91${cleanMobile}" style="color:#2563EB;text-decoration:none;">+91 ${cleanMobile}</a>
+                    <a href="tel:+91${safeMobileHtml}" style="color:#2563EB;text-decoration:none;">+91 ${safeMobileHtml}</a>
                   </td>
                 </tr>
                 ${
-                  cleanEmail
+                  safeEmailHtml
                     ? `
                 <tr>
                   <td style="padding:14px 18px;border-bottom:1px solid #E2E8F0;font-size:14px;color:#64748B;font-weight:600;">
                     ✉️ Email Address:
                   </td>
                   <td style="padding:14px 18px;border-bottom:1px solid #E2E8F0;font-size:15px;color:#0F1B2D;font-weight:600;">
-                    <a href="mailto:${cleanEmail}" style="color:#2563EB;text-decoration:none;">${cleanEmail}</a>
+                    <a href="mailto:${safeEmailHtml}" style="color:#2563EB;text-decoration:none;">${safeEmailHtml}</a>
                   </td>
                 </tr>`
                     : ""
                 }
                 ${
-                  cleanGroups
+                  safeGroupsHtml
                     ? `
                 <tr>
                   <td style="padding:14px 18px;border-bottom:1px solid #E2E8F0;font-size:14px;color:#64748B;font-weight:600;">
                     👥 Kameti Groups:
                   </td>
                   <td style="padding:14px 18px;border-bottom:1px solid #E2E8F0;font-size:15px;color:#0F1B2D;font-weight:600;">
-                    ${cleanGroups}
+                    ${safeGroupsHtml}
                   </td>
                 </tr>`
                     : ""
@@ -167,20 +292,20 @@ export async function POST(req: Request) {
                     ⏰ Samay (IST):
                   </td>
                   <td style="padding:14px 18px;font-size:14px;color:#334155;">
-                    ${istTime}
+                    ${safeTimeHtml}
                   </td>
                 </tr>
               </table>
 
               ${
-                cleanMessage
+                safeMessageHtml
                   ? `
               <!-- Customer Message Box -->
               <div style="margin-bottom:26px;">
                 <label style="display:block;font-size:14px;font-weight:700;color:#0F1B2D;margin-bottom:8px;">
                   💬 Grahak Ka Sandesh (Message):
                 </label>
-                <div style="background:#EEF2FF;border-left:4px solid #3B4FD8;padding:16px 20px;border-radius:0 8px 8px 0;font-size:15px;color:#1E293B;line-height:1.6;white-space:pre-wrap;">${cleanMessage}</div>
+                <div style="background:#EEF2FF;border-left:4px solid #3B4FD8;padding:16px 20px;border-radius:0 8px 8px 0;font-size:15px;color:#1E293B;line-height:1.6;white-space:pre-wrap;">${safeMessageHtml}</div>
               </div>`
                   : ""
               }
@@ -189,7 +314,7 @@ export async function POST(req: Request) {
               <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;">
                 <tr>
                   <td style="padding:4px;" width="50%">
-                    <a href="tel:+91${cleanMobile}" style="display:block;box-sizing:border-box;background:#0F1B2D;color:#ffffff;text-align:center;padding:13px 16px;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;">
+                    <a href="tel:+91${safeMobileHtml}" style="display:block;box-sizing:border-box;background:#0F1B2D;color:#ffffff;text-align:center;padding:13px 16px;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;">
                       📞 Direct Call Karein
                     </a>
                   </td>
@@ -200,11 +325,11 @@ export async function POST(req: Request) {
                   </td>
                 </tr>
                 ${
-                  cleanEmail
+                  safeEmailHtml
                     ? `
                 <tr>
                   <td colspan="2" style="padding:4px;">
-                    <a href="mailto:${cleanEmail}?subject=${encodeURIComponent("Re: KametiPro Demo Enquiry")}" style="display:block;box-sizing:border-box;background:#3B4FD8;color:#ffffff;text-align:center;padding:13px 16px;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;">
+                    <a href="mailto:${safeEmailHtml}?subject=${encodeURIComponent("Re: KametiPro Demo Enquiry")}" style="display:block;box-sizing:border-box;background:#3B4FD8;color:#ffffff;text-align:center;padding:13px 16px;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;">
                       ✉️ Customer Ko Email Par Reply Karein
                     </a>
                   </td>
@@ -234,58 +359,63 @@ export async function POST(req: Request) {
   </table>
 </body>
 </html>
-    `;
+    `.trim();
 
-    // 1. ALWAYS Save lead locally first so it is never lost!
+    // 7. Attempt SMTP Email Dispatch
     let emailSent = false;
     let emailError = "";
     let messageId = "";
 
-    // 2. Attempt SMTP Email Dispatch
     try {
       const mailResult = await sendSmtpMail({
         subject,
         replyTo: cleanEmail || undefined,
         html,
-        text: `Naya Message/Enquiry:\nNaam: ${cleanName}\nMobile: ${cleanMobile}\nEmail: ${cleanEmail || "N/A"}\nMessage: ${cleanMessage || "N/A"}\nGroups: ${cleanGroups || "N/A"}\nSource: ${leadSource}\nTime: ${istTime}`,
+        text: `Naya Message/Enquiry:\nNaam: ${rawName}\nMobile: ${cleanMobile}\nEmail: ${cleanEmail || "N/A"}\nMessage: ${cleanMessage || "N/A"}\nGroups: ${cleanGroups || "N/A"}\nSource: ${leadSource}\nTime: ${istTime}`,
       });
       emailSent = true;
       messageId = mailResult.messageId;
-    } catch (smtpErr: any) {
-      emailError = smtpErr?.message || String(smtpErr);
-      console.warn("⚠️ SMTP warning (Lead is still safely saved locally):", emailError);
+    } catch (smtpErr: unknown) {
+      const errMessage = smtpErr instanceof Error ? smtpErr.message : String(smtpErr);
+
+      // Explicit requirement: if mail env variables are missing, return 500 without leaking details
+      if (errMessage.includes("Missing mail env variables")) {
+        console.error("Mail configuration error:", errMessage);
+        return NextResponse.json(
+          { success: false, message: "Email service not configured" },
+          { status: 500 }
+        );
+      }
+
+      emailError = errMessage;
+      console.warn("⚠️ SMTP dispatch error (lead will still be saved locally):", emailError);
     }
 
-    // Persist lead with status
+    // 8. Persist lead safely to local storage
     const savedRecord = saveLead({
-      name: cleanName,
+      name: rawName,
       mobile: cleanMobile,
-      email: cleanEmail,
-      message: cleanMessage,
-      groups: cleanGroups,
+      email: cleanEmail || undefined,
+      message: cleanMessage || undefined,
+      groups: cleanGroups || undefined,
       source: leadSource,
       emailSent,
       emailError: emailError || undefined,
     });
 
-    // Return success to the user so the customer gets a smooth confirmation!
     return NextResponse.json({
       success: true,
       message: "Message processed successfully",
       leadId: savedRecord.id,
       emailSent,
-      smtpWarning: emailError ? "Google SMTP credentials need update" : undefined,
       messageId: messageId || undefined,
     });
   } catch (error: unknown) {
-    const errorMsg = error instanceof Error ? error.message : "Unknown error";
-    console.error("Critical error processing lead:", error);
-
+    console.error("Critical error processing contact request:", error);
     return NextResponse.json(
       {
         success: false,
-        error: "Message submit error",
-        details: errorMsg,
+        message: "Failed to process enquiry",
       },
       { status: 500 }
     );

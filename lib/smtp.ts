@@ -1,6 +1,9 @@
-import tls from "tls";
+import "server-only";
+import nodemailer from "nodemailer";
+import type { Transporter } from "nodemailer";
 
-interface SendMailOptions {
+export interface SendMailOptions {
+  from?: string;
   to?: string;
   replyTo?: string;
   subject: string;
@@ -11,205 +14,121 @@ interface SendMailOptions {
 export interface MailConfig {
   host: string;
   port: number;
+  secure: boolean;
   user: string;
   pass: string;
+  from: string;
+  to: string;
   fromName?: string;
+  missing: string[];
 }
 
+/**
+ * Reads mail configuration strictly from environment variables without any hardcoded credentials or fallbacks.
+ * Primary variables:
+ * - MAIL_HOST
+ * - MAIL_PORT
+ * - MAIL_SECURE
+ * - MAIL_EMAIL (login user)
+ * - MAIL_EMAIL_PASSWORD
+ * - MAIL_FROM (default MAIL_EMAIL)
+ * - MAIL_TO (where enquiries go)
+ *
+ * Supported backwards-compatible aliases:
+ * - MAIL_EMAIL_HOST (alias for MAIL_HOST)
+ * - MAIL_EMAIL_PORT (alias for MAIL_PORT)
+ * - MAIL_EMAIL_ID (alias for MAIL_EMAIL)
+ * - MAIL_TO_EMAIL (alias for MAIL_TO)
+ */
 export function getMailConfig(): MailConfig {
-  const host = process.env.MAIL_EMAIL_HOST || "smtp.hostinger.com";
-  const port = parseInt(process.env.MAIL_EMAIL_PORT || "465", 10);
-  const user = process.env.MAIL_EMAIL_ID || "info@digiindiasolutions.com";
-  // Strip surrounding quotes and outer spaces, keep hyphens/internal chars intact
-  const rawPass = process.env.MAIL_EMAIL_PASSWORD || "eshj-o3oo-hycv-mvdw";
-  const pass = rawPass.replace(/^["']|["']$/g, "").trim();
+  const host = (process.env.MAIL_HOST || process.env.MAIL_EMAIL_HOST || "").trim();
+  const rawPort = (process.env.MAIL_PORT || process.env.MAIL_EMAIL_PORT || "").trim();
+  const rawSecure = process.env.MAIL_SECURE;
+  const user = (process.env.MAIL_EMAIL || process.env.MAIL_EMAIL_ID || "").trim();
+  const pass = (process.env.MAIL_EMAIL_PASSWORD || "").trim().replace(/^["']|["']$/g, "");
+  const to = (process.env.MAIL_TO || process.env.MAIL_TO_EMAIL || "").trim();
+  const from = (process.env.MAIL_FROM || "").trim() || user;
+
+  const port = rawPort ? parseInt(rawPort, 10) : 0;
+  const secure =
+    rawSecure !== undefined
+      ? rawSecure.toLowerCase() === "true"
+      : port === 465;
+
+  const missing: string[] = [];
+  if (!host) missing.push("MAIL_HOST");
+  if (!rawPort) missing.push("MAIL_PORT");
+  if (!user) missing.push("MAIL_EMAIL");
+  if (!pass) missing.push("MAIL_EMAIL_PASSWORD");
+  if (!to) missing.push("MAIL_TO");
 
   return {
     host,
     port,
+    secure,
     user,
     pass,
+    from,
+    to,
     fromName: "Digi India Solutions | KametiPro",
+    missing,
   };
 }
 
+let transporterInstance: Transporter | null = null;
+
 /**
- * Sends an email using pure Node.js TLS socket over port 465 (SMTPS).
- * Requires zero external dependencies (no separate backend or nodemailer needed).
+ * Lazily creates and returns the Nodemailer transporter.
+ * If required environment variables are missing, throws an Error with only variable names.
  */
-export async function sendSmtpMail(options: SendMailOptions): Promise<{ success: boolean; messageId: string }> {
+export function getTransporter(): Transporter {
   const config = getMailConfig();
-  const recipient = options.to || process.env.MAIL_TO_EMAIL || config.user;
 
-  return new Promise((resolve, reject) => {
-    const socket = tls.connect(
-      {
-        host: config.host,
-        port: config.port,
-        rejectUnauthorized: false,
-        timeout: 15000,
+  if (config.missing.length > 0) {
+    throw new Error(`Missing mail env variables: ${config.missing.join(", ")}`);
+  }
+
+  if (!transporterInstance) {
+    transporterInstance = nodemailer.createTransport({
+      host: config.host,
+      port: config.port,
+      secure: config.secure,
+      auth: {
+        user: config.user,
+        pass: config.pass,
       },
-      () => {
-        // Socket connected
-      }
-    );
-
-    let buffer = "";
-    let step = 0;
-    const senderDomain = config.user.split("@")[1] || "digiindiasolutions.com";
-    const messageId = `<${Date.now()}.${Math.random().toString(36).slice(2)}@${senderDomain}>`;
-
-    const timeoutId = setTimeout(() => {
-      socket.destroy();
-      reject(new Error("SMTP connection timed out after 15 seconds"));
-    }, 15000);
-
-    const cleanUp = () => {
-      clearTimeout(timeoutId);
-      socket.removeAllListeners();
-      socket.destroy();
-    };
-
-    socket.on("error", (err) => {
-      cleanUp();
-      reject(err);
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 15000,
     });
+  }
 
-    socket.on("timeout", () => {
-      cleanUp();
-      reject(new Error("SMTP socket timeout"));
-    });
+  return transporterInstance;
+}
 
-    socket.on("data", (data) => {
-      buffer += data.toString("utf-8");
+/**
+ * Sends email via Nodemailer SMTP.
+ */
+export async function sendSmtpMail(
+  options: SendMailOptions
+): Promise<{ success: boolean; messageId: string }> {
+  const config = getMailConfig();
+  const transporter = getTransporter();
 
-      // SMTP responses can be multiline.
-      // The final line of an SMTP reply begins with 3 digits followed by a space (e.g. "250 OK\r\n").
-      // Intermediate lines have a hyphen (e.g. "250-SIZE 35882577\r\n").
-      const lines = buffer.split(/\r?\n/);
-      const lastLine = lines[lines.length - 2] ?? "";
+  const recipient = options.to || config.to;
+  const fromAddress = options.from || `"${config.fromName}" <${config.from}>`;
 
-      const match = lastLine.match(/^(\d{3})\s(.*)$/);
-      if (!match) {
-        return; // Wait for complete response
-      }
-
-      const statusCode = parseInt(match[1], 10);
-      buffer = ""; // reset buffer for next command response
-
-      // Check for error status codes
-      if (statusCode >= 400 && statusCode < 600) {
-        cleanUp();
-        return reject(new Error(`SMTP Error (${statusCode}): ${match[2]}`));
-      }
-
-      try {
-        switch (step) {
-          case 0:
-            // 220 Server Greeting received
-            if (statusCode === 220) {
-              step = 1;
-              socket.write("EHLO digiindiasolutions.com\r\n");
-            }
-            break;
-
-          case 1:
-            // 250 EHLO response received
-            if (statusCode === 250) {
-              step = 2;
-              socket.write("AUTH LOGIN\r\n");
-            }
-            break;
-
-          case 2:
-            // 334 Username challenge received
-            if (statusCode === 334) {
-              step = 3;
-              const encodedUser = Buffer.from(config.user).toString("base64");
-              socket.write(`${encodedUser}\r\n`);
-            }
-            break;
-
-          case 3:
-            // 334 Password challenge received
-            if (statusCode === 334) {
-              step = 4;
-              const encodedPass = Buffer.from(config.pass).toString("base64");
-              socket.write(`${encodedPass}\r\n`);
-            }
-            break;
-
-          case 4:
-            // 235 Authentication successful
-            if (statusCode === 235) {
-              step = 5;
-              socket.write(`MAIL FROM:<${config.user}>\r\n`);
-            }
-            break;
-
-          case 5:
-            // 250 MAIL FROM ok
-            if (statusCode === 250) {
-              step = 6;
-              socket.write(`RCPT TO:<${recipient}>\r\n`);
-            }
-            break;
-
-          case 6:
-            // 250 RCPT TO ok
-            if (statusCode === 250) {
-              step = 7;
-              socket.write("DATA\r\n");
-            }
-            break;
-
-          case 7:
-            // 354 Start mail input
-            if (statusCode === 354) {
-              step = 8;
-              const encodedSubject = `=?UTF-8?B?${Buffer.from(options.subject, "utf-8").toString("base64")}?=`;
-              const headerLines = [
-                `From: "${config.fromName}" <${config.user}>`,
-                `To: <${recipient}>`,
-                options.replyTo ? `Reply-To: <${options.replyTo}>` : null,
-                `Subject: ${encodedSubject}`,
-                `Date: ${new Date().toUTCString()}`,
-                `Message-ID: ${messageId}`,
-                `MIME-Version: 1.0`,
-                `Content-Type: text/html; charset=UTF-8`,
-              ].filter(Boolean);
-
-              const headers = headerLines.join("\r\n") + "\r\n\r\n";
-              const normalizedHtml = options.html.replace(/\r?\n/g, "\r\n");
-              const body = normalizedHtml + "\r\n.\r\n";
-
-              socket.write(headers + body);
-            }
-            break;
-
-          case 8:
-            // 250 Message accepted for delivery
-            if (statusCode === 250) {
-              step = 9;
-              socket.write("QUIT\r\n");
-            }
-            break;
-
-          case 9:
-            // 221 Bye
-            cleanUp();
-            resolve({ success: true, messageId });
-            break;
-
-          default:
-            cleanUp();
-            resolve({ success: true, messageId });
-            break;
-        }
-      } catch (err) {
-        cleanUp();
-        reject(err);
-      }
-    });
+  const info = await transporter.sendMail({
+    from: fromAddress,
+    to: recipient,
+    replyTo: options.replyTo,
+    subject: options.subject,
+    html: options.html,
+    text: options.text,
   });
+
+  return {
+    success: true,
+    messageId: info.messageId || "",
+  };
 }

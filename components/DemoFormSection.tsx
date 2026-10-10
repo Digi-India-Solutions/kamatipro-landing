@@ -282,7 +282,6 @@ export default function DemoFormSection() {
                   tabIndex={-1}
                   autoComplete="off"
                   aria-hidden="true"
-                  readOnly
                   className="hp-field"
                 />
 

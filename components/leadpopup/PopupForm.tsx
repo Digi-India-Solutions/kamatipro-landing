@@ -170,7 +170,6 @@ export default function PopupForm({ onSuccess }: Props) {
         tabIndex={-1}
         autoComplete="off"
         aria-hidden="true"
-        readOnly
         className="hp-field"
       />
 
